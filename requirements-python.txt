@@ -1,0 +1,9 @@
+# FastAPI and Server
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Dependencies from the original project
+numpy
+opencv-python
+PyWavelets

@@ -1,9 +1,4 @@
-# FastAPI and Server
-fastapi
-uvicorn[standard]
-python-multipart
-
-# Dependencies from the original project
-numpy
+numpy>=1.17.0
 opencv-python
+setuptools
 PyWavelets
