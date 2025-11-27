@@ -11,7 +11,7 @@ app = FastAPI(title="Blind Watermark Service")
 
 # 固定长度配置
 MAX_WATERMARK_LENGTH = 256  # 最大支持 256 字符
-FIXED_WM_BIT_LENGTH = 2048  # 固定的 wm_bit 长度
+FIXED_WM_BIT_LENGTH = 2047  # 固定的 wm_bit 长度（通过 calculate_fixed_length.py 计算得出）
 
 @app.get("/", summary="Health Check")
 def read_root():
@@ -59,12 +59,8 @@ async def embed_watermark(
         bwm.read_img(img=ori_img)
         bwm.read_wm(wm_content_padded, mode='str')
         
-        # 5. 验证 wm_bit_length 是否符合预期
+        # 5. 记录实际的 wm_bit_length（用于日志）
         actual_wm_bit_length = len(bwm.wm_bit)
-        if actual_wm_bit_length != FIXED_WM_BIT_LENGTH:
-            # 首次运行时更新 FIXED_WM_BIT_LENGTH
-            global FIXED_WM_BIT_LENGTH
-            FIXED_WM_BIT_LENGTH = actual_wm_bit_length
         
         # 6. 执行嵌入
         embed_img = bwm.embed()
