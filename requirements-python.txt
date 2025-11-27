@@ -4,6 +4,6 @@ uvicorn[standard]
 python-multipart
 
 # Dependencies from the original project
-numpy
-opencv-python
+numpy>=1.17.0
+opencv-python-headless
 PyWavelets
