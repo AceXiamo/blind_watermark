@@ -9,52 +9,81 @@ from blind_watermark.blind_watermark import WaterMark
 
 app = FastAPI(title="Blind Watermark Service")
 
+# 固定长度配置
+MAX_WATERMARK_LENGTH = 256  # 最大支持 256 字符
+FIXED_WM_BIT_LENGTH = 2048  # 固定的 wm_bit 长度
+
 @app.get("/", summary="Health Check")
 def read_root():
     """Health check endpoint to confirm the service is running."""
-    return {"status": "ok", "message": "Blind Watermark service is running."}
+    return {
+        "status": "ok", 
+        "message": "Blind Watermark service is running.",
+        "config": {
+            "max_watermark_length": MAX_WATERMARK_LENGTH,
+            "fixed_wm_bit_length": FIXED_WM_BIT_LENGTH
+        }
+    }
 
 @app.post("/embed", summary="Embed Watermark")
 async def embed_watermark(
     password_img: int = Form(..., description="Password for embedding location (integer)"),
     password_wm: int = Form(..., description="Password for watermark encryption (integer)"),
-    wm_content: str = Form(..., description="Watermark text content"),
+    wm_content: str = Form(..., description="Watermark text content (max 256 characters)"),
     file: UploadFile = File(..., description="Original image file")
 ):
     """
-    Embeds a text watermark into an image.
-    Receives image, passwords, and watermark text, returns the watermarked image.
-    Returns the watermarked image and the wm_bit_length in headers.
+    Embeds a text watermark into an image using fixed-length padding.
+    Watermark is padded to MAX_WATERMARK_LENGTH, so extraction doesn't need wm_bit_length parameter.
     """
     try:
-        # 1. 读取上传的图片
+        # 1. 验证水印长度
+        if len(wm_content) > MAX_WATERMARK_LENGTH:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Watermark content exceeds maximum length of {MAX_WATERMARK_LENGTH} characters"
+            )
+        
+        # 2. 填充水印到固定长度
+        wm_content_padded = wm_content.ljust(MAX_WATERMARK_LENGTH, '\0')
+        
+        # 3. 读取上传的图片
         image_bytes = await file.read()
         nparr = np.frombuffer(image_bytes, np.uint8)
         ori_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if ori_img is None:
             raise HTTPException(status_code=400, detail="Invalid image file.")
 
-        # 2. 初始化水印工具
+        # 4. 初始化水印工具
         bwm = WaterMark(password_wm=password_wm, password_img=password_img)
         bwm.read_img(img=ori_img)
-        bwm.read_wm(wm_content, mode='str')
+        bwm.read_wm(wm_content_padded, mode='str')
         
-        # 3. 获取 wm_bit 长度（提取时需要）
-        wm_bit_length = len(bwm.wm_bit)
+        # 5. 验证 wm_bit_length 是否符合预期
+        actual_wm_bit_length = len(bwm.wm_bit)
+        if actual_wm_bit_length != FIXED_WM_BIT_LENGTH:
+            # 首次运行时更新 FIXED_WM_BIT_LENGTH
+            global FIXED_WM_BIT_LENGTH
+            FIXED_WM_BIT_LENGTH = actual_wm_bit_length
         
-        # 4. 执行嵌入
+        # 6. 执行嵌入
         embed_img = bwm.embed()
 
-        # 5. 将处理后的图片编码为JPEG格式并返回
+        # 7. 将处理后的图片编码为JPEG格式并返回
         _, encoded_img = cv2.imencode(".jpg", embed_img)
         
-        # 6. 在响应头中返回 wm_bit_length
+        # 8. 返回图片（不再需要在响应头中返回 wm_bit_length）
         return StreamingResponse(
             io.BytesIO(encoded_img.tobytes()), 
             media_type="image/jpeg",
-            headers={"X-WM-Bit-Length": str(wm_bit_length)}
+            headers={
+                "X-Original-Length": str(len(wm_content)),  # 原始长度（用于调试）
+                "X-Max-Length": str(MAX_WATERMARK_LENGTH)
+            }
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred during embedding: {str(e)}")
 
@@ -63,12 +92,11 @@ async def embed_watermark(
 async def extract_watermark(
     password_img: int = Form(..., description="Password for embedding location (integer)"),
     password_wm: int = Form(..., description="Password for watermark encryption (integer)"),
-    wm_bit_length: int = Form(..., description="Length of wm_bit (returned from embed endpoint)"),
     file: UploadFile = File(..., description="Watermarked image file")
 ):
     """
-    Extracts a text watermark from an image.
-    Requires the same passwords used for embedding and the wm_bit_length from embed response.
+    Extracts a text watermark from an image using fixed-length extraction.
+    No need to provide wm_bit_length - it uses the fixed FIXED_WM_BIT_LENGTH.
     """
     try:
         # 1. 读取上传的图片
@@ -81,8 +109,11 @@ async def extract_watermark(
         # 2. 初始化水印工具
         bwm = WaterMark(password_wm=password_wm, password_img=password_img)
         
-        # 3. 执行提取（使用 wm_bit_length 而不是字符串长度）
-        wm_extract = bwm.extract(embed_img=embed_img, wm_shape=wm_bit_length, mode='str')
+        # 3. 执行提取（使用固定的 FIXED_WM_BIT_LENGTH）
+        wm_extract = bwm.extract(embed_img=embed_img, wm_shape=FIXED_WM_BIT_LENGTH, mode='str')
+        
+        # 4. 去除填充的空字符
+        wm_extract = wm_extract.rstrip('\0')
         
         return {"watermark": wm_extract}
 
